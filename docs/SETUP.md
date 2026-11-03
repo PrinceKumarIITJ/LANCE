@@ -59,6 +59,7 @@ Open Mail campaigns and create a campaign:
 The worker sends individual messages, never one mass CC/BCC. Daily cap defaults to 10 and can be set to 1–50 per UTC day. The recipient cooldown defaults to 14 days. Caps count both role-specific emails and campaign emails; uncertain sends count toward the cap. Pause leaves an already in-progress send free to complete. Sender acceptance does not guarantee delivery, a response, or a portal application. An interrupted send is marked uncertain and is not automatically retried. Read your Sent folder before resolving ambiguity.
 
 Profile changes invalidate unsent/queued campaign approvals; create a fresh campaign with the updated profile. Campaigns archive the exact resume attachment. Contact changes should be made before creating/reviewing a campaign.
+Uploading a new resume also invalidates pending job packets and campaign approvals. Finish profile/resume setup before preparing applications or campaigns.
 
 ## 5. Discover and apply
 
@@ -77,6 +78,7 @@ Open LinkedIn in the sidebar and choose Open LinkedIn login. Log in inside the d
 Prepare/approve an imported job and open its details. Start Easy Apply walks through supported Next/Continue/Review steps. Unknown answers, consent, login, navigation errors or custom controls pause it as needs_input. Complete and review the visible step, then choose I reviewed this step — resume Easy Apply. By default it stops on final review; Submit reviewed form performs the final action. Optional Automatically submit approved applications allows the worker to submit supported complete flows after packet approval.
 
 External Apply buttons are not treated as Easy Apply. Follow the company link and import its career page or finish manually. LANCE does not have LinkedIn partner/API access and does not bypass CAPTCHAs or security checks. Browser selectors were tested on synthetic forms; your authenticated live account is needed to validate the current LinkedIn UI.
+When a running browser application pauses for input or has an uncertain result, automatic browser processing waits on that application rather than replacing the open form with another job. Resolve its outcome or finish it before expecting the queue to continue.
 
 Official API access reference: https://learn.microsoft.com/en-us/linkedin/shared/authentication/getting-access
 

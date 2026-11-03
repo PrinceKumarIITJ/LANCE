@@ -80,14 +80,14 @@ def score_job(item, profile):
     if re.search(r'\b(senior|staff|principal|lead|manager|director|sr\.?)\b', title):
         blocked = True
         reasons.append('Senior-level title')
-    if re.search(r'\b(intern|internship|part.time|contract|temporary)\b', title + ' ' + item.get('employment', '')):
+    if re.search(r'\b(intern|internship|part.time|contract|temporary)\b', title + ' ' + item.get('employment', '').lower()):
         blocked = True
         reasons.append('Not a permanent full-time role')
     # Only explicit minimum requirements, not incidental project/year references.
     minimums = [int(x) for x in re.findall(r'(?:minimum(?: of)?|at least|requires?)\s+(\d+)\+?\s+years?', text)]
     minimums += [int(x) for x in re.findall(r'\b(\d+)\+?\s+years?\s+(?:of\s+)?(?:professional|industry|commercial|relevant|work)\s+experience', text)]
     minimums += [int(x) for x in re.findall(r'\b(\d+)\s*[-–]\s*\d+\s+years?\s+(?:of\s+)?experience', text)]
-    if minimums and max(minimums) >= 2:
+    if minimums and max(minimums) > profile.get('experience_months',0)/12:
         blocked = True
         reasons.append('Requires professional experience beyond a fresher profile')
     grad = str(profile.get('graduation_year', 2027))
@@ -135,6 +135,9 @@ def score_job(item, profile):
     if not profile.get('available_from'):
         uncertain = True
         reasons.append('Set your earliest full-time joining date')
+    if not re.search(r'full[\s-]?time|permanent',all_text+' '+item.get('employment',''),re.I):
+        uncertain=True
+        reasons.append('Employment type must be verified as full-time')
     return min(score, 100), 'blocked' if blocked else ('review' if uncertain else 'potential'), reasons
 
 
@@ -147,17 +150,17 @@ def ingest(item):
     with db() as con:
         old = con.execute('SELECT * FROM jobs WHERE fingerprint=?', (fingerprint,)).fetchone()
         if old and old['status'] in ('prepared', 'ready', 'assisted', 'needs_input', 'auto_running') and any(
-                old[key] != item[key] for key in ('title', 'location', 'description')):
+                old[key] != item.get(key,'') for key in ('title', 'location', 'description','employment')):
             con.execute("UPDATE jobs SET status='new',packet=NULL,updated_at=? WHERE id=?", (now(), old['id']))
             con.execute("DELETE FROM outbox WHERE job_id=? AND status IN ('draft','queued')", (old['id'],))
         con.execute('''INSERT INTO jobs(fingerprint,company,title,location,url,description,provider,
-          published,fetched_at,score,eligibility,reasons,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+          published,fetched_at,score,eligibility,reasons,updated_at,employment) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
           ON CONFLICT(fingerprint) DO UPDATE SET description=excluded.description,
           title=excluded.title,location=excluded.location,fetched_at=excluded.fetched_at,
-          score=excluded.score,eligibility=excluded.eligibility,reasons=excluded.reasons''',
+          score=excluded.score,eligibility=excluded.eligibility,reasons=excluded.reasons,employment=excluded.employment''',
           (fingerprint, item['company'], item['title'], item['location'], item['url'],
            item['description'], item['provider'], item.get('published'), now(), score,
-           eligibility, json.dumps(reasons), now()))
+           eligibility, json.dumps(reasons), now(),item.get('employment','')))
         job_id=con.execute('SELECT id FROM jobs WHERE fingerprint=?', (fingerprint,)).fetchone()[0]
     from evaluation import save_assessment
     save_assessment(job_id,item)

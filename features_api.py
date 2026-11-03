@@ -176,7 +176,7 @@ async def linkedin_apply(job_id:int,value:LinkedInApply):
 def setup_guide():
     import html
     guide=(Path(__file__).parent/'docs'/'SETUP.md').read_text(encoding='utf-8')
-    return '<!doctype html><title>LANCE setup</title><pre style="white-space:pre-wrap;font:15px/1.7 system-ui;max-width:900px;margin:40px auto">'+html.escape(guide)+'</pre>'
+    return '<!doctype html><title>LANCE setup</title><link rel="stylesheet" href="/static/style.css"><article class="card"><pre>'+html.escape(guide)+'</pre></article>'
 
 
 @router.post('/api/documents')

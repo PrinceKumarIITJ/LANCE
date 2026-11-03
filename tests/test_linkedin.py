@@ -16,6 +16,8 @@ def test_multistep_easy_apply_known_answers_and_final_submit(client,monkeypatch,
     jid=approved_job(client)
     with store.db() as con:con.execute('UPDATE jobs SET url=? WHERE id=?',('https://www.linkedin.com/jobs/view/123456789/',jid))
     p=store.get_setting('profile');p['answers']={'authorized to work in india?':'Yes'};store.set_setting('profile',p)
+    assert client.post(f'/api/jobs/{jid}/prepare').status_code==200
+    assert client.post(f'/api/jobs/{jid}/approve',json={'eligibility_checked':True,'materials_checked':True}).status_code==200
     async def check():
         async with async_playwright() as pw:
             browser=await pw.chromium.launch(channel='chrome',headless=True)

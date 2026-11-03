@@ -82,9 +82,21 @@ def send(outbox_id):
         item = con.execute('SELECT * FROM jobs WHERE id=?', (row['job_id'],)).fetchone()
         if item['status'] != 'ready':
             raise ValueError('Review the packet and verify eligibility before sending')
+        import json
+        from store import profile_hash
+        manifest=json.loads(packet_path(row['job_id'],'manifest.json').read_text(encoding='utf-8'))
+        if profile_hash(manifest['profile_snapshot'])!=profile_hash(profile):
+            raise ValueError('Profile changed; regenerate and review the packet before sending')
         count = daily_count(con)
         if count >= limit:
             raise ValueError('Daily email limit reached')
+        from datetime import datetime,timedelta,timezone
+        cooldown=get_setting('policy').get('contact_cooldown_days',14)
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=cooldown)).isoformat()
+        recent=sum(con.execute(f"SELECT count(*) FROM {table} WHERE contact_id=? AND status IN ('sending','sent','uncertain') AND sent_at>=?",(row['contact_id'],cutoff)).fetchone()[0]
+                   for table in ('outbox','campaign_messages'))
+        if recent:
+            raise ValueError('Recipient was already contacted within the configured cooldown; review existing conversation first')
         message_id = make_msgid(domain=username.split('@')[-1])
         attachment = packet_path(row['job_id']).read_bytes()
         message = EmailMessage()

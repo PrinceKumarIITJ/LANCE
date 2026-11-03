@@ -167,3 +167,55 @@ def test_generic_job_jsonld_import(client,monkeypatch):
     assert response.status_code==200,response.text
     assert response.json()['imported']
     assert store.job(response.json()['id'])['company']=='StructuredCo'
+
+
+def test_employment_gate_survives_reranking(client):
+    from discovery import ingest
+    from evaluation import rank_all
+    client.put('/api/profile',json=profile())
+    jid=ingest({'company':'Test','title':'Graduate AI Engineer','location':'India','url':'https://example.com/temporary',
+        'description':'Class of 2027. Python.','provider':'ashby','employment':'Intern'})
+    assert store.job(jid)['eligibility']=='blocked'
+    rank_all()
+    assert store.job(jid)['eligibility']=='blocked'
+
+
+def test_resume_upload_invalidates_prior_packets_and_mail_approvals(client,monkeypatch):
+    cid=campaign_setup(client,monkeypatch)
+    client.post(f'/api/campaigns/{cid}/approve',json={'reviewed':True})
+    jid=store.rows('SELECT id FROM jobs')[0]['id']
+    client.post(f'/api/jobs/{jid}/prepare')
+    client.post(f'/api/jobs/{jid}/approve',json={'eligibility_checked':True,'materials_checked':True})
+    pdf=client.get(f'/api/jobs/{jid}/resume.pdf').content
+    client.post('/api/resume',content=pdf)
+    assert store.job(jid)['status']=='new'
+    assert all(m['status']=='draft' for m in client.get('/api/campaigns').json()['messages'])
+    assert client.post(f'/api/campaigns/{cid}/approve',json={'reviewed':True}).status_code==400
+
+
+def test_turning_off_mail_worker_stops_next_recipient(client,monkeypatch):
+    import app
+    cid=campaign_setup(client,monkeypatch)
+    client.post(f'/api/campaigns/{cid}/approve',json={'reviewed':True})
+    config=store.get_setting('policy');config['auto_send_queued']=True;store.set_setting('policy',config)
+    class StopAfterFirst(FakeSMTP):
+        sent=[]
+        def send_message(self,message):
+            self.sent.append(message)
+            latest=store.get_setting('policy');latest['auto_send_queued']=False;store.set_setting('policy',latest)
+            return {}
+    monkeypatch.setattr(campaigns.smtplib,'SMTP_SSL',StopAfterFirst)
+    asyncio.run(app.process_approved_queue(config,cancel_if_disabled=True))
+    assert len(StopAfterFirst.sent)==1
+    assert [m['status'] for m in client.get('/api/campaigns').json()['messages']]==['sent','queued']
+
+
+def test_browser_queue_preserves_pending_form(client,monkeypatch):
+    import app
+    jid=approved_job(client)
+    with store.db() as con:con.execute("UPDATE jobs SET status='needs_input' WHERE id=?",(jid,))
+    monkeypatch.setattr(app.agent,'job_id',jid)
+    async def forbidden(_):raise AssertionError('Pending form must not be replaced')
+    monkeypatch.setattr(app.agent,'open',forbidden)
+    asyncio.run(app.process_approved_queue({'auto_apply_ready':True}))
+    assert store.job(jid)['status']=='needs_input'

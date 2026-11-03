@@ -113,7 +113,7 @@ def test_bad_destinations_rejected(url):
     ('Senior AI Engineer','Python, minimum 5 years professional experience.','blocked'),
     ('AI Engineer Intern','Graduating in 2027. Python internship.','blocked'),
     ('Graduate Software Engineer','Only class of 2026 is eligible. Python.','blocked'),
-    ('Graduate Software Engineer','Classes graduating 2026-2028. Python.','potential'),
+    ('Graduate Software Engineer','Full-time. Classes graduating 2026-2028. Python.','potential'),
     ('AI Engineer','Python required, experience building models.','review'),
     ('Backend Engineer','Requires 3 years of professional experience.','blocked'),
 ])

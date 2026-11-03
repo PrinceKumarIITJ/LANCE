@@ -67,7 +67,11 @@ async def scheduler():
             except Exception as exc:
                 worker_status['error'] = type(exc).__name__ + ': ' + str(exc)[:250]
                 event('scheduler_error', worker_status['error'])
-        await process_approved_queue(config)
+        try:
+            await process_approved_queue(config,cancel_if_disabled=True)
+        except Exception as exc:
+            worker_status['error']=type(exc).__name__+': queue paused for this cycle; review activity'
+            event('queue_cycle_error',worker_status['error'])
         if config.get('auto_sync_inbox') and time.monotonic()-last_mail_sync>=600:
             last_mail_sync=time.monotonic()
             try:
@@ -76,10 +80,12 @@ async def scheduler():
                 event('mail_sync_stopped',type(exc).__name__+': reconnect mailbox or run manual sync')
 
 
-async def process_approved_queue(config):
+async def process_approved_queue(config,cancel_if_disabled=False):
     """Only previously reviewed packets/drafts are eligible for unattended delivery."""
     if config.get('auto_send_queued'):
         for message in rows("SELECT id FROM campaign_messages WHERE status='queued' ORDER BY id LIMIT 5"):
+            if cancel_if_disabled and not get_setting('policy').get('auto_send_queued'):
+                break
             try:
                 result=await asyncio.to_thread(campaigns.send,message['id'])
                 if result['status']=='deferred':
@@ -89,6 +95,8 @@ async def process_approved_queue(config):
                     con.execute("UPDATE campaign_messages SET status='draft',error=? WHERE id=? AND status='queued'",
                         (type(exc).__name__+': reconnect/review and requeue',message['id']))
         for draft in rows("SELECT id FROM outbox WHERE status='queued' ORDER BY id LIMIT 5"):
+            if cancel_if_disabled and not get_setting('policy').get('auto_send_queued'):
+                break
             try:
                 await asyncio.to_thread(outreach.send, draft['id'])
             except Exception as exc:
@@ -97,6 +105,10 @@ async def process_approved_queue(config):
                                 (type(exc).__name__ + ': automatic send stopped; review configuration and packet', draft['id']))
                 event('auto_email_stopped', f'Outbox #{draft["id"]}: {type(exc).__name__}')
     if config.get('auto_apply_ready') and not agent.lock.locked():
+        if cancel_if_disabled and not get_setting('policy').get('auto_apply_ready'):
+            return
+        if agent.job_id and job(agent.job_id)['status'] in ('needs_input','assisted','uncertain','submitting'):
+            return  # Preserve the pending Chrome form until the candidate resolves it.
         # Email and browser are alternative channels for a job, never both automatically.
         candidates = rows("""SELECT j.id FROM jobs j WHERE j.status='ready' AND NOT EXISTS
             (SELECT 1 FROM outbox o WHERE o.job_id=j.id AND o.status IN ('queued','sending','sent','uncertain'))
@@ -109,12 +121,14 @@ async def process_approved_queue(config):
                 continue
             try:
                 if linkedin_flow.is_linkedin(job(jid)['url']):
-                    await linkedin_flow.apply(jid,submit=True)
+                    await linkedin_flow.apply(jid,submit=True,automatic=cancel_if_disabled)
                     continue
                 await agent.open(jid)
                 result = await agent.fill(jid)
                 if result['needs_you'] or not result['filled']:
                     raise ValueError('Unknown questions, consent, login or navigation requires your review')
+                if cancel_if_disabled and not get_setting('policy').get('auto_apply_ready'):
+                    raise ValueError('Automatic submission was disabled; review the current form before continuing')
                 await agent.submit(jid)
             except Exception as exc:
                 with db() as con:
@@ -277,6 +291,11 @@ async def resume(request: Request):
     profile = get_setting('profile')
     profile['resume'] = {'uploaded_at': now(), 'text': text[:40000]}
     set_setting('profile', profile)
+    with db() as con:
+        con.execute("UPDATE jobs SET status='new',packet=NULL WHERE status IN ('prepared','ready','assisted','needs_input','auto_running')")
+        con.execute("DELETE FROM outbox WHERE status IN ('draft','queued')")
+        con.execute("UPDATE campaign_messages SET status='draft',error='Resume changed; create a fresh campaign' WHERE status='queued'")
+        con.execute("UPDATE campaigns SET status='stale' WHERE status IN ('draft','queued','paused')")
     return {'text': text[:40000], 'message': 'Review extracted text and add accurate facts to your profile; nothing inferred automatically.'}
 
 
@@ -348,6 +367,10 @@ def approve(job_id: int, approval: Approval):
     if item['status'] != 'prepared' or not approval.eligibility_checked or not approval.materials_checked:
         raise ValueError('Prepare and review the PDF, facts, batch eligibility, location, and joining date first')
     packet_path(job_id)
+    from store import profile_hash
+    manifest=json.loads(packet_path(job_id,'manifest.json').read_text(encoding='utf-8'))
+    if profile_hash(manifest['profile_snapshot'])!=profile_hash():
+        raise ValueError('Profile changed; regenerate this packet before approving')
     review=packet_path(job_id,'review.json')
     result=json.loads(review.read_text(encoding='utf-8'))
     if not result['passed']:

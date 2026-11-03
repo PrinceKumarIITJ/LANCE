@@ -4,7 +4,7 @@ import re
 from urllib.parse import urlencode, urlsplit
 from browser_agent import agent
 from discovery import ingest
-from store import DATA, db, job, now, event
+from store import DATA, db, job, now, event,get_setting
 
 flow_lock = asyncio.Lock()
 
@@ -99,7 +99,7 @@ async def pause(job_id, reason):
     return {'status':'needs_input','message':reason}
 
 
-async def apply(job_id, submit=False, resume=False):
+async def apply(job_id, submit=False, resume=False, automatic=False):
     async with flow_lock:
         item=job(job_id)
         if not is_linkedin(item['url']):
@@ -136,6 +136,8 @@ async def apply(job_id, submit=False, resume=False):
             final=root.get_by_role('button',name=re.compile(r'^Submit application$',re.I))
             if await final.count() and await final.first.is_visible():
                 if submit:
+                    if automatic and not get_setting('policy').get('auto_apply_ready'):
+                        return await pause(job_id,'Automatic submission was disabled. Review this final step before submitting.')
                     return await agent.submit(job_id)
                 return {'status':'assisted','message':'Reached the final review step. Check the form in Chrome, then click Submit reviewed form.'}
             missing=await root.locator('input,select,textarea').evaluate_all('els=>els.filter(e=>e.willValidate&&!e.validity.valid).length')

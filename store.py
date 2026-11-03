@@ -85,6 +85,8 @@ def init(recover=True):
         ''')
         if 'campaign_message_id' not in {row[1] for row in con.execute('PRAGMA table_info(inbox)')}:
             con.execute('ALTER TABLE inbox ADD COLUMN campaign_message_id INTEGER')
+        if 'employment' not in {row[1] for row in con.execute('PRAGMA table_info(jobs)')}:
+            con.execute("ALTER TABLE jobs ADD COLUMN employment TEXT NOT NULL DEFAULT ''")
         defaults = {
             'profile': {'name': '', 'email': '', 'phone': '', 'college': '',
                 'degree': 'B.Tech Computer Science', 'graduation_year': 2027,

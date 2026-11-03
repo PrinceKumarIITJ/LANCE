@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 from playwright.async_api import async_playwright
-from store import DATA, db, get_setting, job, now, event
+from store import DATA, db, get_setting, job, now, event, profile_hash
 from packets import packet_path
 from discovery import public_url
 
@@ -47,6 +47,9 @@ class BrowserAgent:
             if item['status'] in ('submitting', 'submitted', 'uncertain'):
                 raise ValueError('Application already submitted or uncertain; verify the portal before continuing')
             context = await self.start()
+            if self.page and not self.page.is_closed() and self.job_id:
+                if job(self.job_id)['status']=='submitted':
+                    await self.page.close()
             self.page = await context.new_page()
             self.job_id = job_id
             self.scope_selector = None
@@ -61,6 +64,10 @@ class BrowserAgent:
             item = job(job_id)
             if item['status'] not in ('ready', 'assisted', 'auto_running', 'needs_input'):
                 raise ValueError('Review and approve the application packet first')
+            manifest=json.loads(packet_path(job_id,'manifest.json').read_text(encoding='utf-8'))
+            expected_hash=profile_hash(manifest['profile_snapshot'])
+            if expected_hash!=profile_hash(profile):
+                raise ValueError('Profile changed after this packet was prepared; regenerate and approve the materials')
             names = profile['name'].split()
             self.scope_selector = scope_selector
             values = {'first name': names[0], 'last name': ' '.join(names[1:]), 'full name': profile['name'],
@@ -128,6 +135,8 @@ class BrowserAgent:
                     except Exception:
                         skipped.append(info['label'])
             with db() as con:
+                if profile_hash()!=expected_hash or job(job_id)['packet']!=item['packet']:
+                    raise ValueError('Profile or packet changed while filling; review a fresh packet before submitting')
                 con.execute("UPDATE jobs SET status='assisted',updated_at=? WHERE id=?", (now(), job_id))
             event('browser_filled', json.dumps({'filled': filled, 'needs_you': skipped}), job_id)
             return {'filled': filled, 'needs_you': skipped,
@@ -143,6 +152,9 @@ class BrowserAgent:
             item = job(job_id)
             if item['status'] != 'assisted':
                 raise ValueError('Fill and review the form before submitting')
+            manifest=json.loads(packet_path(job_id,'manifest.json').read_text(encoding='utf-8'))
+            if profile_hash(manifest['profile_snapshot'])!=profile_hash():
+                raise ValueError('Profile changed; regenerate and review materials before submitting')
             body = await self.page.locator('body').inner_text()
             confirmation_pattern = r'(?:your application (?:has been|was) (?:successfully )?(?:submitted|received|sent)|application (?:submitted successfully|sent)|thank you for applying|thanks for applying)'
             if re.search(confirmation_pattern, body, re.I):

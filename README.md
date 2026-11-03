@@ -54,6 +54,9 @@ python -m pytest -q
 node --check static/app.js
 node --check static/features.js
 node --check static/toolkit.js
+python tests/dashboard_e2e.py
 ```
 
 Tests use temporary storage, fake mail transports and synthetic browser forms. They do not send to real HR contacts or apply to real jobs. Browser tests need Google Chrome; other tests do not need login or API keys. CI runs on Windows and Linux. Authenticated Gmail/LinkedIn and optional external integrations require the user's setup before live validation.
+
+The dashboard end-to-end check starts its own temporary local server and exercises profile setup, real PDF generation, packet approval, resume upload, single-contact entry, sheet import, campaign personalization and queue approval. It deliberately leaves sending disabled. Screenshots are written under ignored `artifacts/screenshots/`.
