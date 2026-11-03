@@ -158,7 +158,10 @@ def ingest(item):
           (fingerprint, item['company'], item['title'], item['location'], item['url'],
            item['description'], item['provider'], item.get('published'), now(), score,
            eligibility, json.dumps(reasons), now()))
-        return con.execute('SELECT id FROM jobs WHERE fingerprint=?', (fingerprint,)).fetchone()[0]
+        job_id=con.execute('SELECT id FROM jobs WHERE fingerprint=?', (fingerprint,)).fetchone()[0]
+    from evaluation import save_assessment
+    save_assessment(job_id,item)
+    return job_id
 
 
 async def fetch_board(source, transport=None):

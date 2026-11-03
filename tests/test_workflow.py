@@ -11,12 +11,20 @@ import browser_agent
 import app as web
 import discovery
 import outreach
+import campaigns
+import vault
+import documents
+import features_api
+import resume_templates
+import reports
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    for module in (store, packets, browser_agent, web):
+    for module in (store, packets, browser_agent, web, campaigns, vault, documents, features_api, resume_templates, reports):
         monkeypatch.setattr(module, 'DATA', tmp_path)
+    for key in ('ANTHROPIC_API_KEY','ANTHROPIC_MODEL','OLLAMA_MODEL'):
+        monkeypatch.delenv(key,raising=False)
     with TestClient(web.app) as client:
         client.headers['x-pilot-token'] = web.TOKEN
         yield client

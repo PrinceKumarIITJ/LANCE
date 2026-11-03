@@ -59,8 +59,14 @@ def draft(job_id, contact_id):
 
 
 def send(outbox_id):
+    import mail_account
+    from campaigns import daily_count
     username, password = os.environ.get('SMTP_USER'), os.environ.get('SMTP_PASSWORD')
-    if not username or not password:
+    account = mail_account.status()
+    oauth = account.get('connected', False)
+    if oauth:
+        username = account['email']
+    if not username or (not oauth and not password):
         raise ValueError('Email is not connected. Configure SMTP_USER and SMTP_PASSWORD locally; never paste passwords in chat.')
     profile = get_setting('profile')
     if username.lower() != profile['email'].lower():
@@ -76,7 +82,7 @@ def send(outbox_id):
         item = con.execute('SELECT * FROM jobs WHERE id=?', (row['job_id'],)).fetchone()
         if item['status'] != 'ready':
             raise ValueError('Review the packet and verify eligibility before sending')
-        count = con.execute("SELECT count(*) FROM outbox WHERE status IN ('sending','sent','uncertain') AND substr(sent_at,1,10)=?", (now()[:10],)).fetchone()[0]
+        count = daily_count(con)
         if count >= limit:
             raise ValueError('Daily email limit reached')
         message_id = make_msgid(domain=username.split('@')[-1])
@@ -91,12 +97,17 @@ def send(outbox_id):
         con.execute("UPDATE outbox SET status='sending',message_id=?,sent_at=? WHERE id=?", (message_id, now(), outbox_id))
     data_started = False
     try:
-        with smtplib.SMTP_SSL(os.environ.get('SMTP_HOST', 'smtp.gmail.com'), int(os.environ.get('SMTP_PORT', '465')), context=ssl.create_default_context(), timeout=35) as smtp:
-            smtp.login(username, password)
+        if oauth:
+            mail_account.access_token()
             data_started = True
-            refused = smtp.send_message(message)
-            if refused:
-                raise smtplib.SMTPRecipientsRefused(refused)
+            mail_account.send_mime(message)
+        else:
+            with smtplib.SMTP_SSL(os.environ.get('SMTP_HOST', 'smtp.gmail.com'), int(os.environ.get('SMTP_PORT', '465')), context=ssl.create_default_context(), timeout=35) as smtp:
+                smtp.login(username, password)
+                data_started = True
+                refused = smtp.send_message(message)
+                if refused:
+                    raise smtplib.SMTPRecipientsRefused(refused)
         status, error = 'sent', None
     except Exception as exc:
         status = 'uncertain' if data_started else 'draft'
@@ -108,12 +119,7 @@ def send(outbox_id):
     return {'status': status, 'error': error, 'message_id': message_id}
 
 
-def sync_inbox():
-    username, password = os.environ.get('SMTP_USER'), os.environ.get('SMTP_PASSWORD')
-    if not username or not password:
-        raise ValueError('Connect your mailbox locally first')
-    tracked = rows("SELECT o.message_id,o.job_id,c.email FROM outbox o JOIN contacts c ON c.id=o.contact_id WHERE o.status IN ('sent','uncertain')")
-    count = 0
+def _imap_messages(username, password):
     with imaplib.IMAP4_SSL(os.environ.get('IMAP_HOST', 'imap.gmail.com'), timeout=30) as inbox:
         inbox.login(username, password)
         inbox.select('INBOX', readonly=True)
@@ -122,37 +128,60 @@ def sync_inbox():
             raise ValueError('Mailbox search failed')
         for uid in data[0].split()[-100:]:
             status, parts = inbox.fetch(uid, '(BODY.PEEK[])')
-            if status != 'OK':
-                continue
-            raw = next((part[1] for part in parts if isinstance(part, tuple)), b'')
-            msg = message_from_bytes(raw, policy=policy.default)
-            sender = parseaddr(str(msg.get('From', '')))[1].lower()
-            refs = str(msg.get('In-Reply-To', '')) + ' ' + str(msg.get('References', ''))
-            candidates = [entry for entry in tracked if entry['message_id'] and entry['message_id'] in refs]
-            # Correlate by thread only. A sender may represent several applications.
-            if not candidates:
-                continue
-            message_id = str(msg.get('Message-ID') or hashlib.sha256(raw).hexdigest())
-            subject = str(msg.get('Subject', ''))
-            part = msg.get_body(preferencelist=('plain',)) if msg.is_multipart() else msg
-            try:
-                text = part.get_content() if part else ''
-            except Exception:
-                text = ''
-            if not isinstance(text, str):
-                text = ''
-            fresh = text.split('\nOn ')[0].split('\n>')[0][:6000]
-            combined = (subject + '\n' + fresh).lower()
-            signal = 'reply'
-            if re.search(r'unfortunately|not moving forward|not selected|regret to inform', combined):
-                signal = 'possible rejection'
-            elif re.search(r'interview|schedule a call|assessment|coding test', combined):
-                signal = 'possible interview'
-            elif re.search(r'offer letter|pleased to offer', combined):
-                signal = 'possible offer'
-            with db() as con:
-                cur = con.execute('INSERT OR IGNORE INTO inbox VALUES (?,?,?,?,?,?,?)',
-                    (message_id, sender, subject, str(msg.get('Date', '')), signal, candidates[0]['job_id'], fresh[:1500]))
-                count += cur.rowcount
+            if status == 'OK':
+                raw = next((part[1] for part in parts if isinstance(part, tuple)), b'')
+                if raw:
+                    yield raw
+
+
+def record_replies(raw_messages):
+    tracked = rows("SELECT message_id,job_id FROM outbox WHERE status IN ('sent','uncertain')")
+    campaign_threads = rows("SELECT message_id,id FROM campaign_messages WHERE status IN ('sent','uncertain')")
+    count = 0
+    for raw in raw_messages:
+        msg = message_from_bytes(raw, policy=policy.default)
+        sender = parseaddr(str(msg.get('From', '')))[1].lower()
+        refs = str(msg.get('In-Reply-To', '')) + ' ' + str(msg.get('References', ''))
+        candidates = [entry for entry in tracked if entry['message_id'] and entry['message_id'] in refs]
+        campaign_matches = [entry for entry in campaign_threads if entry['message_id'] and entry['message_id'] in refs]
+        if not candidates and not campaign_matches:
+            continue
+        message_id = str(msg.get('Message-ID') or hashlib.sha256(raw).hexdigest())
+        subject = str(msg.get('Subject', ''))
+        part = msg.get_body(preferencelist=('plain',)) if msg.is_multipart() else msg
+        try:
+            text = part.get_content() if part else ''
+        except Exception:
+            text = ''
+        if not isinstance(text, str):
+            text = ''
+        fresh = text.split('\nOn ')[0].split('\n>')[0][:6000]
+        combined = (subject + '\n' + fresh).lower()
+        signal = 'reply'
+        if re.search(r'unfortunately|not moving forward|not selected|regret to inform', combined):
+            signal = 'possible rejection'
+        elif re.search(r'interview|schedule a call|assessment|coding test', combined):
+            signal = 'possible interview'
+        elif re.search(r'offer letter|pleased to offer', combined):
+            signal = 'possible offer'
+        with db() as con:
+            cur = con.execute('INSERT OR IGNORE INTO inbox(message_id,sender,subject,date,signal,job_id,preview,campaign_message_id) VALUES (?,?,?,?,?,?,?,?)',
+                (message_id, sender, subject, str(msg.get('Date', '')), signal,
+                 candidates[0]['job_id'] if candidates else None, fresh[:1500],
+                 campaign_matches[0]['id'] if campaign_matches else None))
+            count += cur.rowcount
+    return count
+
+
+def sync_inbox():
+    import mail_account
+    if mail_account.status().get('connected'):
+        raw_messages = mail_account.inbox_messages()
+    else:
+        username, password = os.environ.get('SMTP_USER'), os.environ.get('SMTP_PASSWORD')
+        if not username or not password:
+            raise ValueError('Connect your mailbox locally first')
+        raw_messages = _imap_messages(username, password)
+    count = record_replies(raw_messages)
     event('inbox_sync', f'{count} new correlated replies; signals require review')
     return {'new_replies': count}

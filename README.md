@@ -1,90 +1,59 @@
 # LANCE
 
-A local application workspace for a 2027 Computer Science graduate targeting full-time AI/software roles. Onsite preference: India. Remote preference: worldwide, subject to each employer's country and work-authorization restrictions.
+A local job-application system for a 2027 Computer Science graduate targeting full-time AI Engineer and software roles. Onsite: India. Remote: worldwide, subject to employer country restrictions.
 
-## Run on Windows
+## Start
 
-From PowerShell:
+Install Python 3.11+ and Google Chrome, then run inside this checkout:
 
 ```powershell
-cd 'C:\Users\Prince Kumar\OneDrive\Documents\LARK\LISA\LANCE'
 .\run.ps1
 ```
 
-Open **http://127.0.0.1:8765**. The first run creates a virtual environment and installs Python dependencies; later runs reuse it. Requires Python 3.11+ and Google Chrome for the browser assistant. If your PowerShell execution policy prevents a script from running, run the equivalent commands manually (no policy change is required):
+Open **http://127.0.0.1:8765**. On macOS/Linux use `sh run.sh`. The app stays on your laptop; keep it open and the laptop awake for scheduled work.
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8765
-```
+## Workflow
 
-## The application loop
+1. **Profile:** upload your resume and add verified skills/projects, actual institution and earliest joining date. Supporting documents can suggest evidence for review.
+2. **Discover:** watch company career boards (Greenhouse, Lever, Ashby), search LinkedIn in your own Chrome session, import structured career URLs or paste postings.
+3. **Evaluate:** review five-dimension scores and explicit graduation, experience, full-time, location and joining-date unknowns.
+4. **Prepare:** generate tailored resume and cover-letter PDFs, ATS/text/page-budget checks, source-fact manifest, optional custom LaTeX templates.
+5. **Apply:** supported company forms and LinkedIn Easy Apply Next/Review navigation; optional automatic submission of reviewed packets. Unknown fields/login/consent pause for you. Confirmation evidence is required to record success.
+6. **Email:** connect your Gmail account using OAuth, or a supported SMTP account. Add one HR email or upload CSV/XLSX; create personalized campaigns, preview, approve and automatically deliver separate messages with your resume attached.
+7. **Track:** thread-correlated replies, outcomes, application archives, follow-up reminders and offline HTML/CSV exports.
+8. **Prepare further:** interview packs, factual STAR scaffolds, application-field drafts, skill-gap plans, GitHub evidence and optional Notion sync.
 
-1. **Your profile:** upload your resume PDF, review extracted text, fill the actual IIT/institution, name, contact details, skills, exact project/experience facts, and earliest full-time joining date. Graduation defaults to 2027; no other personal facts are invented. Each fact should retain project title, dates, contribution and verified metrics.
-2. **Career sources:** add Greenhouse, Lever or Ashby company board slugs. Click **Find new openings**. Listings are live API results, not demo data. Board import is a company watchlist, not an internet-wide search engine. Errors appear next to the source.
-3. **LinkedIn / other pages:** choose **Import a job**, paste the URL and full description from a real posting. Search inside LinkedIn yourself; automated LinkedIn discovery/Easy Apply navigation is not implemented. This does not bypass login, CAPTCHA or platform restrictions.
-4. **Job pipeline:** inspect the relevance score and eligibility reasons. Scoring uses deterministic keywords and conservative checks; it does not establish eligibility. Remote roles always require country-restriction review. Roles specifying other graduation years, seniority, experience, or internships are flagged. Year ranges are expanded. Minimum-experience parsing is conservative and cannot understand every wording.
-5. **Prepare materials:** generates a real resume PDF and cover-letter text from the profile. Only the ordering of your verified facts changes. Drafts need review for layout, facts and relevance. Standard fonts may not render non-Latin text fully. User-uploaded original PDF is stored separately; the **generated, reviewed PDF** is attached to applications.
-6. **Approve packet:** review the PDF, cover letter, batch eligibility, joining date, location and work authorization. Check the two explicit review boxes.
-7. **Browser:** open the portal in the dedicated Chrome profile. Log in yourself. Navigate through the real application/Easy Apply screens yourself, then choose **Fill current form** to fill supported exact-label fields and the resume. Unknown questions, radio/checkbox choices, custom dropdowns and consent need your input. Exact question/answer pairs can be saved in your profile. Repeat fill on later steps. Choose **Submit reviewed form** only on the final screen after review. A unique recognized submit button and native required-field validity are checked. Custom portals may still need manual completion.
-8. **Submission:** only explicit confirmation text records success; a private screenshot and text evidence are kept. Missing confirmation or interrupted submit marks `uncertain`, which is never retried automatically. Check the portal/email and record the result with confirmation notes.
-9. **HR outreach:** import your own real contacts CSV; source is mandatory. Prepare a role's packet, then create an email draft for a matching-company contact. Review/edit the subject and body, save edits, then send. One recipient per email; resume attached. Contacts are never guessed or harvested.
-10. **Replies / tracking:** mailbox sync reads the latest 100 messages and correlates replies using thread IDs from emails sent by this app. It displays possible interview/offer/rejection signals for review; ATS emails not in those threads need manual tracking. Record outcomes with notes and export CSV as needed.
+## Documentation
 
-## What runs automatically
+- [Complete setup, Gmail connection, LinkedIn and privacy](docs/SETUP.md)
+- [CLI / slash-command equivalents](docs/COMMANDS.md)
+- [Coverage and differences from the supplied PDF](docs/PDF_PARITY.md)
 
-Enable scheduled discovery in **Automation** (default off), optionally followed by draft preparation for potential matches. The local process must remain open and the laptop awake. Optional **Automatically submit approved applications** processes reviewed `ready` packets, one per 15-second worker cycle. It opens Chrome, fills supported exact-label fields and submits only if all encountered fields are supported and required-field checks pass. Login, navigation, consent, unknown questions and custom controls pause the job as `needs_input`; complete those yourself and use the manual browser controls. **Automatically send queued HR emails** delivers up to five reviewed, explicitly queued drafts per cycle within the daily limit. Queued/sent/uncertain email applications are excluded from automatic browser application to avoid using both channels automatically. Remove a queued email from its detail view to cancel it. Both submission switches default off. No email or application is sent merely by starting a fresh app. This release does not implement automatic LinkedIn searches, arbitrary-form reasoning, auto follow-ups, or an application-to-every-company sweep. Real portals may require manual completion; automatic submissions are limited to fully supported forms.
+## HR sheet to email
 
-## Email connection
+Use HR outreach to add one address or upload an 8 MB CSV/TSV/XLSX sheet (up to 2,000 unique contacts). Common email/name/company headers are recognized. Formulas are not executed; invalid rows are reported. Mail campaigns creates one personalized message per recipient. Review the attached resume and messages, approve the campaign, then enable automatic sending. Default: 10 per UTC day, 14-day recipient cooldown. Caps and duplicate protection are shared with role-specific outreach. Unknown names/companies use neutral text.
 
-Stop an existing app instance before connecting. Use:
+Gmail OAuth needs your own Google Cloud Desktop client with Gmail API enabled and your account allowed by its consent/test-user configuration. Windows protects token files with per-user DPAPI; Unix uses owner-only permissions. The profile email must match the sending account. No passwords or tokens belong in Git or chat.
 
-```powershell
-.\connect-mail.ps1
-```
+## Automation and practical limits
 
-The script asks locally for your Gmail address and app password using a hidden prompt and starts the app with credentials in its process environment, not in source files or command-line arguments. Do not send credentials in chat. It removes its temporary credential variables when the app exits. Your Google account must allow app passwords and have 2-Step Verification. Some college/managed accounts do not allow this. This version has **no Google OAuth integration**. If app passwords are unavailable, use browser/manual email or a supported SMTP account configured through environment variables; never enable insecure authentication.
+Submission and sending switches default off. They act only on approved packets or explicitly queued campaigns/drafts. Discovery and draft preparation can run on a schedule. Login, CAPTCHA, legal/compensation questions, consent and unsupported controls require user input. LinkedIn page layouts can change; its connector needs validation in your authenticated session. External Apply jobs may need the company-site flow. An uncertain send/submit is never blindly retried. Email acceptance is not proof of delivery or a portal application.
 
-For another provider, configure `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_HOST`, `SMTP_PORT` (implicit TLS only; default 465), and `IMAP_HOST` in the launching process. Sender must match the profile email. SMTP acceptance means the sending server accepted the message, not guaranteed delivery or a portal application. Email outreach is tracked separately from portal submission. The default maximum is 10 emails per UTC day, configurable up to 50. Ambiguous sends are marked uncertain and cannot be automatically resent. Thread sync is read-only and bounded to the latest 100 inbox messages.
+No actual application or email is sent by a fresh installation. The app cannot guarantee universal portal coverage, eligibility, interviews or employment. It does not invent achievements, company facts or salary benchmarks. Optional Ollama/Anthropic inference only orders valid fact IDs; deterministic tools work without an AI account. Cloud inference uses your configured provider and its account charges.
 
-## Optional local AI
+## Data
 
-The system works without any AI API key. Default tailoring uses keyword overlap to reorder your actual facts. If Ollama is already installed with a model available, set its exact model name before launch:
+Private profile, resume, contacts, Chrome session, credentials, generated documents and SQLite tracking stay in `data/`, which is excluded from Git. Set `LANCE_DATA` to a dedicated private directory if desired. This checkout may be under OneDrive; your existing sync policy applies. The service binds only to loopback and is single-user. Do not expose its port publicly.
 
-```powershell
-$env:OLLAMA_MODEL = 'your-installed-model-name'
-.\run.ps1
-```
+The earlier `job-pilot` folder is separate. To reuse its tracker, stop both apps and point `LANCE_DATA` at its dedicated `data` directory; migration preserves records. Never copy that directory into tracked source.
 
-Ollama is called only at `127.0.0.1:11434`. It receives the posting and supplied facts; the accepted output is a list of valid fact IDs, never generated candidate claims. Invalid/unavailable output falls back to keyword ordering. An inference request can take up to 90 seconds. No model is downloaded automatically.
-
-## Data and operation
-
-- `data/pilot.db`: SQLite profile, sources, jobs, contacts, outbox, audit history and reply excerpts.
-- `data/original-resume.pdf`: original upload.
-- `data/packets/<job-id>/`: generated resume, cover letter and source-fact manifest.
-- `data/browser-profile/`: separate Chrome login/session state. Your everyday Chrome profile is not used.
-- `data/evidence/`: application confirmation screenshots.
-
-The entire `data/` folder is gitignored; protect it like your resume and login sessions. This checkout is inside OneDrive, so local files may sync according to your existing OneDrive configuration. To keep runtime data elsewhere, set `JOB_PILOT_DATA` to a directory you control before starting the app. Do not put runtime data in a public repository. The service binds only to loopback, rejects other hostnames/cross-origin mutations, requires a per-process request token, and adds response security headers. It is a single-user local service, not a hosted multi-user deployment. Do not expose its port publicly.
-
-Restart recovery marks in-flight submissions/sends uncertain. Saving profile changes invalidates unsubmitted packet approvals and deletes unsent/queued drafts. Material changes in a re-fetched posting also invalidate approval. Restarting pauses in-progress browser preparation as needs_input. Discovery does not detect all expired jobs; verify the actual page before submitting. Cross-provider reposts with different URLs may still duplicate; canonical URL tracking removes query tracking parameters, not different employer postings. No success or job offer is guaranteed.
-
-## Verification
+## Tests
 
 ```powershell
 python -m pytest -q
 node --check static/app.js
+node --check static/features.js
+node --check static/toolkit.js
 ```
 
-Tests use a separate temporary data directory and mocked provider/mail responses. They do not send email or submit any real applications. Browser end-to-end checks, when Chrome is available, use local synthetic forms and a temporary browser context.
-
-## Official integration references
-
-- [Greenhouse public Job Board API](https://docs.greenhouse.io/job-board) — reading jobs is public; its application POST requires an employer key, so this app uses the candidate-facing browser form.
-- [Lever Postings API](https://github.com/lever/postings-api) — public listing API and hosted application URLs.
-- [Ashby public job postings](https://developers.ashbyhq.com/docs/public-job-posting-api) — job board listing schema.
-- [Playwright persistent browser context](https://playwright.dev/python/docs/api/class-browsertype#browser-type-launch-persistent-context).
-- [Google app-password availability](https://support.google.com/accounts/answer/185833).
-- [Ollama structured outputs](https://docs.ollama.com/capabilities/structured-outputs).
+Tests use temporary storage, fake mail transports and synthetic browser forms. They do not send to real HR contacts or apply to real jobs. Browser tests need Google Chrome; other tests do not need login or API keys. CI runs on Windows and Linux. Authenticated Gmail/LinkedIn and optional external integrations require the user's setup before live validation.

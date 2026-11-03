@@ -21,10 +21,16 @@ from discovery import ingest, score_job, sync_sources, public_url
 from packets import prepare, packet_path
 from browser_agent import agent
 import outreach
+import campaigns
+import mail_account
+import linkedin_flow
+from features_api import router as features_router
+from runtime_lock import InstanceLock
 
 TOKEN = secrets.token_urlsafe(32)
 sync_lock = asyncio.Lock()
 last_cycle = 0.0
+last_mail_sync=0.0
 worker_status = {'running': False, 'last_run': None, 'last_result': None, 'error': None}
 
 
@@ -51,6 +57,7 @@ async def cycle():
 
 
 async def scheduler():
+    global last_mail_sync
     while True:
         await asyncio.sleep(15)
         config = get_setting('policy')
@@ -61,11 +68,26 @@ async def scheduler():
                 worker_status['error'] = type(exc).__name__ + ': ' + str(exc)[:250]
                 event('scheduler_error', worker_status['error'])
         await process_approved_queue(config)
+        if config.get('auto_sync_inbox') and time.monotonic()-last_mail_sync>=600:
+            last_mail_sync=time.monotonic()
+            try:
+                await asyncio.to_thread(outreach.sync_inbox)
+            except Exception as exc:
+                event('mail_sync_stopped',type(exc).__name__+': reconnect mailbox or run manual sync')
 
 
 async def process_approved_queue(config):
     """Only previously reviewed packets/drafts are eligible for unattended delivery."""
     if config.get('auto_send_queued'):
+        for message in rows("SELECT id FROM campaign_messages WHERE status='queued' ORDER BY id LIMIT 5"):
+            try:
+                result=await asyncio.to_thread(campaigns.send,message['id'])
+                if result['status']=='deferred':
+                    break
+            except Exception as exc:
+                with db() as con:
+                    con.execute("UPDATE campaign_messages SET status='draft',error=? WHERE id=? AND status='queued'",
+                        (type(exc).__name__+': reconnect/review and requeue',message['id']))
         for draft in rows("SELECT id FROM outbox WHERE status='queued' ORDER BY id LIMIT 5"):
             try:
                 await asyncio.to_thread(outreach.send, draft['id'])
@@ -86,6 +108,9 @@ async def process_approved_queue(config):
             if not changed:
                 continue
             try:
+                if linkedin_flow.is_linkedin(job(jid)['url']):
+                    await linkedin_flow.apply(jid,submit=True)
+                    continue
                 await agent.open(jid)
                 result = await agent.fill(jid)
                 if result['needs_you'] or not result['filled']:
@@ -99,18 +124,22 @@ async def process_approved_queue(config):
 
 @asynccontextmanager
 async def lifespan(app):
-    init()
-    task = asyncio.create_task(scheduler())
-    yield
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
-    await agent.close()
+    with InstanceLock(DATA/'app.lock'):
+        init()
+        task = asyncio.create_task(scheduler())
+        try:
+            yield
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            await agent.close()
 
 
 app = FastAPI(title='LANCE', lifespan=lifespan, docs_url=None, redoc_url=None)
+app.include_router(features_router)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost', 'testserver'])
 
 
@@ -125,6 +154,8 @@ async def local_security(request: Request, call_next):
         if not secrets.compare_digest(supplied, TOKEN):
             return Response('Reload LANCE and try again', status_code=403)
     response = await call_next(request)
+    if request.url.path=='/oauth/google/callback':
+        request.scope['query_string']=b''  # OAuth authorization codes must not appear in access logs.
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['Referrer-Policy'] = 'no-referrer'
@@ -146,7 +177,7 @@ async def home():
 
 @app.get('/static/{filename}')
 async def asset(filename: str):
-    if filename not in ('app.js', 'style.css'):
+    if filename not in ('app.js', 'features.js', 'toolkit.js', 'style.css'):
         raise HTTPException(404)
     return FileResponse(ROOT / 'static' / filename)
 
@@ -162,7 +193,7 @@ def state():
             'inbox': rows('SELECT * FROM inbox ORDER BY date DESC LIMIT 100'),
             'events': rows('SELECT * FROM events ORDER BY id DESC LIMIT 80'),
             'worker': worker_status,
-            'connections': {'email': bool(os.environ.get('SMTP_USER') and os.environ.get('SMTP_PASSWORD')),
+            'connections': {'email': mail_account.status().get('connected',False) or bool(os.environ.get('SMTP_USER') and os.environ.get('SMTP_PASSWORD')),
                             'local_ai': os.environ.get('OLLAMA_MODEL') or None,
                             'browser': agent.context is not None}}
 
@@ -185,6 +216,8 @@ class Profile(BaseModel):
     linkedin: str = ''
     portfolio: str = ''
     answers: dict[str, str] = Field(default_factory=dict, max_length=100)
+    experience_months:int=Field(default=0,ge=0,le=600)
+    work_preferences:list[str]=Field(default_factory=list,max_length=30)
 
 
 @app.put('/api/profile')
@@ -208,11 +241,15 @@ def save_profile(profile: Profile):
     with db() as con:
         con.execute("UPDATE jobs SET status='new',packet=NULL WHERE status IN ('prepared','ready','assisted','needs_input','auto_running')")
         con.execute("DELETE FROM outbox WHERE status IN ('draft','queued')")
+        con.execute("UPDATE campaign_messages SET status='draft',error='Profile changed; create a fresh campaign' WHERE status='queued'")
+        con.execute("UPDATE campaigns SET status='stale' WHERE status IN ('draft','queued','paused')")
     for item in rows('SELECT * FROM jobs'):
         score, eligibility, reasons = score_job(item, data)
         with db() as con:
             con.execute('UPDATE jobs SET score=?,eligibility=?,reasons=? WHERE id=?',
                         (score, eligibility, json.dumps(reasons), item['id']))
+    from evaluation import rank_all
+    rank_all()
     event('profile_updated', 'Profile saved; unsubmitted packets require regeneration')
     return {'saved': True}
 
@@ -311,6 +348,10 @@ def approve(job_id: int, approval: Approval):
     if item['status'] != 'prepared' or not approval.eligibility_checked or not approval.materials_checked:
         raise ValueError('Prepare and review the PDF, facts, batch eligibility, location, and joining date first')
     packet_path(job_id)
+    review=packet_path(job_id,'review.json')
+    result=json.loads(review.read_text(encoding='utf-8'))
+    if not result['passed']:
+        raise ValueError('Resolve resume review issues first: '+'; '.join(result['issues']))
     with db() as con:
         con.execute("UPDATE jobs SET status='ready',updated_at=? WHERE id=?", (now(), job_id))
     event('approved', 'Candidate confirmed materials and job eligibility', job_id)
@@ -339,7 +380,7 @@ async def browser(job_id: int, action: str):
     if action == 'open':
         return await agent.open(job_id)
     if action == 'fill':
-        return await agent.fill(job_id)
+        return await agent.fill(job_id,trust_existing=True)
     if action == 'submit':
         return await agent.submit(job_id)
     raise HTTPException(404)
@@ -417,6 +458,8 @@ class Policy(BaseModel):
     auto_send_queued: bool = False
     min_score: int = Field(default=45, ge=0, le=100)
     email_daily_limit: int = Field(default=10, ge=1, le=50)
+    contact_cooldown_days:int=Field(default=14,ge=1,le=90)
+    auto_sync_inbox:bool=False
 
 
 @app.put('/api/policy')
